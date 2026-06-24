@@ -16,6 +16,9 @@ USER = os.getenv('PAN_USER')
 PASS = os.getenv('PAN_PASS')
 
 def get_api_key():
+    if not FW_IP or not USER or not PASS:
+        return None, "Missing firewall credentials in environment"
+        
     auth_url = f"https://{FW_IP}/api/?type=keygen&user={USER}&password={PASS}"
     try:
         res = requests.get(auth_url, verify=False, timeout=10)
@@ -23,89 +26,110 @@ def get_api_key():
             root = ET.fromstring(res.content)
             key_node = root.find(".//key")
             if key_node is not None:
-                return key_node.text
+                return key_node.text, None
+        return None, f"Failed to get key, status {res.status_code}"
     except Exception as e:
-        sys.stderr.write(f"Auth failed: {str(e)}\n")
-    return None
+        return None, str(e)
 
 def fetch_command_xml(cmd, api_key):
     url = f"https://{FW_IP}/api/?type=op&cmd={cmd}&key={api_key}"
     try:
-        res = requests.get(url, verify=False, timeout=10)
+        # Bumped to 15s to account for internal container routing latency
+        res = requests.get(url, verify=False, timeout=15)
         if res.status_code == 200:
             return ET.fromstring(res.content)
-    except Exception as e:
-        sys.stderr.write(f"Command error {cmd}: {str(e)}\n")
+    except Exception:
+        pass
     return None
 
 def main():
-    api_key = get_api_key()
-    if not api_key:
-        print(json.dumps({"error": "Failed to authenticate with Firewall Management"}))
-        return
-
-    # Base baseline values
-    sessions = 0
-    throughput = "0"
-    vpn_users = 0
-    threats = 0  # Threat queries require heavy log parsing; defaulting to 0 for performance
-    log_disk = "0%"
-    ha_state = "N/A"
-
-    # Query 1: Session Info (Active Sessions & Throughput)
-    session_root = fetch_command_xml("<show><session><info></info></session></show>", api_key)
-    if session_root is not None:
-        active_node = session_root.find(".//num-active")
-        if active_node is not None and active_node.text:
-            sessions = int(active_node.text)
-            
-        kbps_node = session_root.find(".//kbps")
-        if kbps_node is not None and kbps_node.text:
-            # Convert Kbps to Mbps for the dashboard display
-            throughput = str(int(kbps_node.text) // 1000)
-
-    # Query 2: High Availability State
-    ha_root = fetch_command_xml("<show><high-availability><state></state></high-availability></show>", api_key)
-    if ha_root is not None:
-        state_node = ha_root.find(".//group/local-info/state")
-        if state_node is not None and state_node.text:
-            ha_state = state_node.text.upper()
-
-    # Query 3: Disk Space (Requires CDATA terminal parsing)
-    disk_root = fetch_command_xml("<show><system><disk-space></disk-space></system></show>", api_key)
-    if disk_root is not None:
-        result_text = disk_root.find(".//result")
-        if result_text is not None and result_text.text:
-            # Parse the CDATA Linux output line by line looking for panlogs
-            for line in result_text.text.strip().split("\n"):
-                if "/opt/panlogs" in line:
-                    parts = line.split()
-                    if len(parts) >= 5:
-                        log_disk = parts[4]
-
-    # Query 4: GlobalProtect VPN Users
-    vpn_root = fetch_command_xml("<show><global-protect-gateway><current-user></current-user></global-protect-gateway></show>", api_key)
-    if vpn_root is not None:
-        result_node = vpn_root.find(".//result")
-        if result_node is not None:
-            # If users exist, they are listed as <entry> elements. 
-            # If the result block is completely empty, it means 0 users.
-            entries = result_node.findall(".//entry")
-            if entries:
-                vpn_users = len(entries)
-
-    print(json.dumps({
+    # Initialize output dictionary strictly to prevent stdout garbage
+    output = {
         "summary": {
+            "active_sessions": 0,
+            "throughput_mbps": "0",
+            "vpn_users": 0,
+            "threat_events": 0,
+            "log_disk": "0%",
+            "ha_status": "N/A"
+        },
+        "status": "error",
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+
+    try:
+        api_key, err = get_api_key()
+        if not api_key:
+            output["error"] = f"Failed to authenticate with Firewall Management: {err}"
+            print(json.dumps(output))
+            return
+
+        # Base baseline values
+        sessions = 0
+        throughput = "0"
+        vpn_users = 0
+        threats = 0  # Threat queries require heavy log parsing; defaulting to 0 for performance
+        log_disk = "0%"
+        ha_state = "N/A"
+
+        # Query 1: Session Info (Active Sessions & Throughput)
+        session_root = fetch_command_xml("<show><session><info></info></session></show>", api_key)
+        if session_root is not None:
+            active_node = session_root.find(".//num-active")
+            if active_node is not None and active_node.text:
+                sessions = int(active_node.text)
+                
+            kbps_node = session_root.find(".//kbps")
+            if kbps_node is not None and kbps_node.text:
+                # Convert Kbps to Mbps for the dashboard display
+                throughput = str(int(kbps_node.text) // 1000)
+
+        # Query 2: High Availability State
+        ha_root = fetch_command_xml("<show><high-availability><state></state></high-availability></show>", api_key)
+        if ha_root is not None:
+            state_node = ha_root.find(".//group/local-info/state")
+            if state_node is not None and state_node.text:
+                ha_state = state_node.text.upper()
+
+        # Query 3: Disk Space (Requires CDATA terminal parsing)
+        disk_root = fetch_command_xml("<show><system><disk-space></disk-space></system></show>", api_key)
+        if disk_root is not None:
+            result_text = disk_root.find(".//result")
+            if result_text is not None and result_text.text:
+                # Parse the CDATA Linux output line by line looking for panlogs
+                for line in result_text.text.strip().split("\n"):
+                    if "/opt/panlogs" in line:
+                        parts = line.split()
+                        if len(parts) >= 5:
+                            log_disk = parts[4]
+
+        # Query 4: GlobalProtect VPN Users
+        vpn_root = fetch_command_xml("<show><global-protect-gateway><current-user></current-user></global-protect-gateway></show>", api_key)
+        if vpn_root is not None:
+            result_node = vpn_root.find(".//result")
+            if result_node is not None:
+                # If users exist, they are listed as <entry> elements. 
+                # If the result block is completely empty, it means 0 users.
+                entries = result_node.findall(".//entry")
+                if entries:
+                    vpn_users = len(entries)
+
+        # Assign to output
+        output["summary"] = {
             "active_sessions": sessions,
             "throughput_mbps": throughput,
             "vpn_users": vpn_users,
             "threat_events": threats,
             "log_disk": log_disk,
             "ha_status": ha_state
-        },
-        "status": "success",
-        "timestamp": datetime.datetime.now().isoformat()
-    }))
+        }
+        output["status"] = "success"
+
+    except Exception as e:
+        output["error"] = f"Runtime exception: {str(e)}"
+
+    # FINAL GUARANTEE: Only print pure JSON
+    print(json.dumps(output))
 
 if __name__ == "__main__":
     # Suppress insecure HTTPS warnings for local internal IPs
