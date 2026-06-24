@@ -1,0 +1,7 @@
+requests
+urllib3
+python-dotenv
+duo_client
+pyTenable
+msal
+openpyxl

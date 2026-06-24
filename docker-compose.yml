@@ -1,0 +1,27 @@
+services:
+  wir:
+    build: .
+    image: wir-wir:final
+    container_name: wir_builder
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      # We REMOVED the ".:/app" mount to stop host-folder pollution
+      # We only mount what the container needs to see from the host:
+      - ./collectors:/app/collectors
+      - ./server.cjs:/app/server.cjs
+      - /home/damurphy/wir_archive:/home/damurphy/wir_archive
+      # Data access for Curated Collectors
+      - /home/damurphy/docker_apps/wug-dash:/data/wug:ro
+      - /home/damurphy/docker_apps/vmware-vm-govc:/data/govc:ro
+      - /home/damurphy/docker_apps/sentinelone:/data/s1:ro
+      - /home/damurphy/docker_apps/host-monitor:/data/host:ro
+      - /home/damurphy/docker_apps/veeam_reports:/data/veeam:ro
+      - /home/damurphy/docker_apps/teamdynamix-dash:/data/tdx:ro
+    networks:
+      - galactic-net
+
+networks:
+  galactic-net:
+    external: true
