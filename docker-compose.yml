@@ -19,6 +19,10 @@ services:
       - /home/damurphy/docker_apps/host-monitor:/data/host:ro
       - /home/damurphy/docker_apps/veeam_reports:/data/veeam:ro
       - /home/damurphy/docker_apps/teamdynamix-dash:/data/tdx:ro
+    environment:
+      - TENANT_ID=${TENANT_ID}
+      - CLIENT_ID=${CLIENT_ID}
+      - CLIENT_SECRET=${CLIENT_SECRET}
     networks:
       - galactic-net
 
