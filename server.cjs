@@ -78,7 +78,8 @@ const runCollector = (scriptName, res) => {
         return res.status(404).json({ error: "Script not found" });
     }
 
-    exec(`python3 ${scriptPath}`, (error, stdout, stderr) => {
+    // Increased timeout to 45 seconds to accommodate network latency in OpenShift
+    exec(`python3 ${scriptPath}`, { timeout: 45000 }, (error, stdout, stderr) => {
         if (error) {
             console.log(`!! [EXEC ERROR] ${scriptName}: ${stderr || error.message}`);
             return res.status(500).json({ error: stderr || "Python execution failed" });
