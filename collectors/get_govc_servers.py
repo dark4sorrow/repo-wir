@@ -3,20 +3,27 @@ import json
 import os
 from datetime import datetime
 
-# Reverted to the original Docker volume map paths
-GOVC_PATH = "/data/govc/govc"
-ENV_PATH = "/data/govc/govc.env"
-VM_JSON_PATH = "/data/govc/vms.json"
+# Updated to support dynamic directory creation in OpenShift
+BASE_DIR = "/data/govc"
+GOVC_PATH = os.path.join(BASE_DIR, "govc")
+ENV_PATH = os.path.join(BASE_DIR, "govc.env")
+VM_JSON_PATH = os.path.join(BASE_DIR, "vms.json")
+
+def ensure_dir(file_path):
+    directory = os.path.dirname(file_path)
+    if not os.path.exists(directory):
+        os.makedirs(directory)
 
 def get_govc_env():
     env_vars = os.environ.copy()
     try:
-        with open(ENV_PATH, 'r') as f:
-            for line in f:
-                if line.startswith('export '):
-                    key_val = line.replace('export ', '').strip().split('=')
-                    if len(key_val) == 2:
-                        env_vars[key_val[0]] = key_val[1].strip("'\"")
+        if os.path.exists(ENV_PATH):
+            with open(ENV_PATH, 'r') as f:
+                for line in f:
+                    if line.startswith('export '):
+                        key_val = line.replace('export ', '').strip().split('=')
+                        if len(key_val) == 2:
+                            env_vars[key_val[0]] = key_val[1].strip("'\"")
     except Exception:
         return None
     return env_vars
@@ -29,6 +36,7 @@ def run_govc_cmd(args, env):
         return str(e)
 
 def main():
+    ensure_dir(VM_JSON_PATH)
     env = get_govc_env()
     
     raw_vms = ""
