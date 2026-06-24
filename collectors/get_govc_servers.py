@@ -29,6 +29,9 @@ def main():
     # Securely inherit the bulk variables injected from the wir-env-secrets map
     env = os.environ.copy()
     
+    # FIX: Force govc to use the universally writable /tmp directory for its session cache
+    env["HOME"] = "/tmp"
+    
     raw_vms = ""
     if os.path.exists(GOVC_PATH):
         raw_vms = run_govc_cmd(["ls", "-json", "/SDC/vm"], env)
