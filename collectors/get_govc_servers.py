@@ -3,10 +3,9 @@ import json
 import os
 from datetime import datetime
 
-# Updated to support dynamic directory creation in OpenShift
+# Pathing configuration for OpenShift volume space
 BASE_DIR = "/data/govc"
 GOVC_PATH = os.path.join(BASE_DIR, "govc")
-ENV_PATH = os.path.join(BASE_DIR, "govc.env")
 VM_JSON_PATH = os.path.join(BASE_DIR, "vms.json")
 
 def ensure_dir(file_path):
@@ -14,44 +13,56 @@ def ensure_dir(file_path):
     if not os.path.exists(directory):
         os.makedirs(directory)
 
-def get_govc_env():
-    env_vars = os.environ.copy()
-    try:
-        if os.path.exists(ENV_PATH):
-            with open(ENV_PATH, 'r') as f:
-                for line in f:
-                    if line.startswith('export '):
-                        key_val = line.replace('export ', '').strip().split('=')
-                        if len(key_val) == 2:
-                            env_vars[key_val[0]] = key_val[1].strip("'\"")
-    except Exception:
-        return None
-    return env_vars
-
 def run_govc_cmd(args, env):
     try:
+        # Executes the local govc binary using environment credentials
         result = subprocess.run([GOVC_PATH] + args, env=env, capture_output=True, text=True, timeout=15)
-        return result.stdout
-    except Exception as e:
-        return str(e)
+        if result.returncode == 0:
+            return result.stdout
+    except Exception:
+        pass
+    return ""
 
 def main():
     ensure_dir(VM_JSON_PATH)
-    env = get_govc_env()
+    
+    # Securely inherit the bulk variables injected from the wir-env-secrets map
+    env = os.environ.copy()
     
     raw_vms = ""
-    if env and os.path.exists(GOVC_PATH):
+    if os.path.exists(GOVC_PATH):
         raw_vms = run_govc_cmd(["ls", "-json", "/SDC/vm"], env)
     
-    try:
-        with open(VM_JSON_PATH, "r") as f:
-            vms = json.load(f)
-    except:
-        vms = []
+    vms = []
+    
+    # If we successfully pulled fresh data from vCenter, parse it and update the cache
+    if raw_vms:
+        try:
+            live_data = json.loads(raw_vms)
+            # Handle both a direct list or a nested elements structure if wrapped by govc output
+            if isinstance(live_data, list):
+                vms = live_data
+            elif isinstance(live_data, dict) and "elements" in live_data:
+                vms = live_data["elements"]
+            
+            # Rebuild and write the cache file from scratch
+            with open(VM_JSON_PATH, "w") as f:
+                json.dump(vms, f, indent=4)
+        except Exception:
+            pass
 
-    if not vms and not raw_vms:
-         print(json.dumps({"error": f"No VM data found locally. Missing {VM_JSON_PATH}"}))
-         return
+    # Fallback: If live data query failed, try loading from existing file cache
+    if not vms:
+        try:
+            with open(VM_JSON_PATH, "r") as f:
+                vms = json.load(f)
+        except Exception:
+            vms = []
+
+    # If both live pull and cache fallback fail, return an explicit error
+    if not vms:
+        print(json.dumps({"error": f"No VM data available. Live query failed and missing {VM_JSON_PATH}"}))
+        return
 
     total_vms = len(vms)
     powered_on = len([v for v in vms if v.get('power') == 'poweredOn'])
