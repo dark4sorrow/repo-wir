@@ -18,7 +18,8 @@ app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
 // --- STORAGE CONFIG ---
-const ARCHIVE_DIR = '/home/damurphy/wir_archive';
+// Fallback to an internal directory relative to the application workspace if no env var is set
+const ARCHIVE_DIR = process.env.ARCHIVE_DIR || path.join(__dirname, 'wir_archive');
 const UPLOADS_DIR = path.join(ARCHIVE_DIR, 'uploads'); 
 const DRAFT_FILE = path.join(ARCHIVE_DIR, 'current_weekly_draft.json');
 const AUDIT_FILE = path.join(ARCHIVE_DIR, 'audit_log.json');
